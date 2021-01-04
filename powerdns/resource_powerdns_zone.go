@@ -128,6 +128,7 @@ func resourcePDNSZoneCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	d.SetId(createdZoneInfo.ID)
+	resourcePDNSZoneRead(d, meta)
 
 	return nil
 }
@@ -172,9 +173,13 @@ func resourcePDNSZoneUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	client := meta.(*Client)
 
-	zoneInfo := ZoneInfo{}
-	if d.HasChange("kind") {
+	zoneInfo := ZoneInfoUpd{}
+	if d.HasChange("kind") || d.HasChange("account") || d.HasChange("soa_edit_api") {
+		zoneInfo.Name = d.Get("name").(string)
 		zoneInfo.Kind = d.Get("kind").(string)
+		zoneInfo.Account = d.Get("account").(string)
+		zoneInfo.SoaEditAPI = d.Get("soa_edit_api").(string)
+
 		c := client.UpdateZone(d.Id(), zoneInfo)
 
 		if c != nil {
