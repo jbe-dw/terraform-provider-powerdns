@@ -49,7 +49,6 @@ func resourcePDNSZone() *schema.Resource {
 				Type:     schema.TypeSet,
 				Elem:     &schema.Schema{Type: schema.TypeString},
 				Optional: true,
-				ForceNew: true,
 			},
 
 			"masters": {
@@ -204,8 +203,44 @@ func resourcePDNSZoneUpdate(d *schema.ResourceData, meta interface{}) error {
 		zoneInfo.SoaEditAPI = d.Get("soa_edit_api").(string)
 
 		c := client.UpdateZone(d.Id(), zoneInfo)
+
+		if c != nil {
+			return c
+		}
 		resourcePDNSZoneRead(d, meta)
-		return c
+	}
+
+	if d.HasChange("nameservers") {
+		rrSet := ResourceRecordSet{
+			Name: d.Get("name").(string),
+			Type: "NS",
+			TTL:  3600,
+		}
+
+		nameservers := d.Get("nameservers").(*schema.Set).List()
+
+		if len(nameservers) > 0 {
+			records := make([]Record, 0, len(nameservers))
+			for _, recContent := range nameservers {
+				records = append(records,
+					Record{Name: rrSet.Name,
+						Type:    rrSet.Type,
+						TTL:     3600,
+						Content: recContent.(string),
+						SetPtr:  false})
+			}
+
+			rrSet.Records = records
+
+			log.Printf("[DEBUG] Updating PowerDNS NS Record: %#v", rrSet)
+
+			_, err := client.ReplaceRecordSet(d.Get("name").(string), rrSet)
+			if err != nil {
+				return fmt.Errorf("Failed to update PowerDNS NS Record: %s", err)
+			}
+
+			resourcePDNSZoneRead(d, meta)
+		}
 	}
 	return nil
 }
