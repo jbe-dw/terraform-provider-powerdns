@@ -49,6 +49,12 @@ func resourcePDNSZone() *schema.Resource {
 				Type:     schema.TypeSet,
 				Elem:     &schema.Schema{Type: schema.TypeString},
 				Optional: true,
+				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+					if len(old) == 0 {
+						return false
+					}
+					return true
+				},
 			},
 
 			"masters": {
@@ -56,6 +62,18 @@ func resourcePDNSZone() *schema.Resource {
 				Elem:     &schema.Schema{Type: schema.TypeString},
 				Optional: true,
 				ForceNew: true,
+			},
+
+			"serial": {
+				Type:     schema.TypeInt,
+				Computed: true,
+				ForceNew: false,
+			},
+
+			"soa": {
+				Type:     schema.TypeString,
+				Computed: true,
+				ForceNew: false,
 			},
 
 			"soa_edit_api": {
@@ -122,6 +140,7 @@ func resourcePDNSZoneCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	d.SetId(createdZoneInfo.ID)
+	resourcePDNSZoneRead(d, meta)
 
 	return nil
 }
@@ -138,9 +157,10 @@ func resourcePDNSZoneRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("name", zoneInfo.Name)
 	d.Set("kind", zoneInfo.Kind)
 	d.Set("account", zoneInfo.Account)
+	d.Set("serial", zoneInfo.Serial)
 	d.Set("soa_edit_api", zoneInfo.SoaEditAPI)
 
-	if zoneInfo.Kind != "Slave" && len(d.Get("nameservers").(*schema.Set).List()) > 0 {
+	if zoneInfo.Kind != "Slave" {
 		nameservers, err := client.ListRecordsInRRSet(zoneInfo.Name, zoneInfo.Name, "NS")
 		if err != nil {
 			return fmt.Errorf("couldn't fetch zone %s nameservers from PowerDNS: %v", zoneInfo.Name, err)
@@ -152,7 +172,22 @@ func resourcePDNSZoneRead(d *schema.ResourceData, meta interface{}) error {
 		}
 
 		d.Set("nameservers", zoneNameservers)
+
 	}
+
+	soarecord, err := client.ListRecordsInRRSet(zoneInfo.Name, zoneInfo.Name, "SOA")
+	if err != nil {
+		return fmt.Errorf("couldn't fetch zone %s SOA from PowerDNS: %v", zoneInfo.Name, err)
+	}
+
+	var zoneSOA []string
+	for _, soa := range soarecord {
+		zoneSOA = append(zoneSOA, soa.Content)
+	}
+
+	zoneSOAStr := strings.Join(zoneSOA, "")
+
+	d.Set("soa", zoneSOAStr)
 
 	if strings.EqualFold(zoneInfo.Kind, "Slave") {
 		d.Set("masters", zoneInfo.Masters)
@@ -166,9 +201,13 @@ func resourcePDNSZoneUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	client := meta.(*Client)
 
-	zoneInfo := ZoneInfo{}
-	if d.HasChange("kind") {
+	zoneInfo := ZoneInfoUpd{}
+	if d.HasChange("kind") || d.HasChange("account") || d.HasChange("soa_edit_api") {
+		zoneInfo.Name = d.Get("name").(string)
 		zoneInfo.Kind = d.Get("kind").(string)
+		zoneInfo.Account = d.Get("account").(string)
+		zoneInfo.SoaEditAPI = d.Get("soa_edit_api").(string)
+
 		c := client.UpdateZone(d.Id(), zoneInfo)
 
 		if c != nil {
